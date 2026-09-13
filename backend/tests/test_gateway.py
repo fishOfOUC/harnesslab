@@ -146,6 +146,37 @@ def test_denied_tool_has_no_side_effect(repo, knowledge, settings, project) -> N
     assert repo.list_operations(run["id"]) == []
 
 
+def test_citation_labels_are_global_and_stable(repo, knowledge, settings, project) -> None:
+    """引用标签在全 run 内唯一：多次检索续号，重复片段复用原标签。"""
+    from harnesslab.config import REPO_ROOT
+    from harnesslab.tools.local import search_knowledge
+
+    demo = REPO_ROOT / "datasets" / "demo"
+    for name in ("gateway-v1.md", "gateway-v2.md", "operations-guide.md"):
+        knowledge.import_document(project["id"], name, (demo / name).read_bytes())
+
+    run = _make_run(repo, project)
+    budget = RunBudget(repo, run["id"], BudgetLimits())
+    ctx = _context(repo, knowledge, settings, project, run, budget=budget)
+
+    first = search_knowledge(ctx, "并发上限", top_k=5)
+    first_labels = [hit["label"] for hit in first.data["hits"]]
+    assert first_labels[0] == "S1"
+    assert len(set(first_labels)) == len(first_labels)
+
+    second = search_knowledge(ctx, "故障恢复要求", top_k=5)
+    second_labels = [hit["label"] for hit in second.data["hits"]]
+    max_first = max(int(label[1:]) for label in first_labels)
+    new_labels = [label for label in second_labels if label not in first_labels]
+    assert new_labels, "第二次检索命中的是新文档，应当产生新标签"
+    assert all(int(label[1:]) > max_first for label in new_labels), "新标签必须接续已有最大编号"
+    assert len({*first_labels, *second_labels}) == len(first_labels) + len(new_labels)
+
+    repeated = search_knowledge(ctx, "并发上限", top_k=5)
+    repeated_labels = [hit["label"] for hit in repeated.data["hits"]]
+    assert repeated_labels == first_labels, "再次检索同一内容应复用原标签"
+
+
 def test_write_report_creates_artifact_and_download_ref(repo, knowledge, settings, project) -> None:
     run = _make_run(repo, project)
     budget = RunBudget(repo, run["id"], BudgetLimits())

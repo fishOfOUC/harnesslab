@@ -88,44 +88,73 @@ def calculator(ctx: ToolContext, expression: str) -> ToolResult:
 
 
 # --------------------------------------------------------------------- 知识
+def next_citation_label(existing: list[dict[str, Any]]) -> int:
+    """引用标签在全 run 内全局唯一，编号从已有引用之后继续。"""
+    highest = 0
+    for citation in existing:
+        label = str(citation.get("label", ""))
+        if label.startswith("S") and label[1:].isdigit():
+            highest = max(highest, int(label[1:]))
+    return highest + 1
+
+
 def search_knowledge(ctx: ToolContext, query: str, top_k: int = 8) -> ToolResult:
     result = ctx.knowledge.search(
         ctx.project_id, query, top_k=max(1, min(top_k, 20)), index_version=ctx.index_version
     )
+    # 引用标签跨多次检索、跨审批中断保持稳定：
+    # 已引用过的 chunk 复用原标签，新 chunk 从已有最大编号之后继续编号。
+    label_by_chunk = {str(c["chunk_id"]): str(c["label"]) for c in ctx.citations}
+    counter = next_citation_label(ctx.citations)
+    hits: list[dict[str, Any]] = []
+    new_citations: list[dict[str, Any]] = []
+    for hit in result.hits:
+        chunk = hit.chunk
+        chunk_id = str(chunk["id"])
+        label = label_by_chunk.get(chunk_id)
+        if label is None:
+            label = f"S{counter}"
+            label_by_chunk[chunk_id] = label
+            counter += 1
+            new_citations.append(
+                {
+                    "label": label,
+                    "chunk_id": chunk_id,
+                    "document_id": chunk["document_id"],
+                    "document_version": chunk["document_version"],
+                    "source_title": chunk["source_title"],
+                    "heading_path": chunk["heading_path"],
+                    "page": chunk.get("page"),
+                    "char_start": chunk.get("char_start"),
+                    "char_end": chunk.get("char_end"),
+                    "snippet": chunk["text"][:400],
+                    "score": round(hit.score, 6),
+                }
+            )
+        hits.append(
+            {
+                "label": label,
+                "chunk_id": chunk_id,
+                "source_title": chunk["source_title"],
+                "document_version": chunk["document_version"],
+                "heading_path": chunk["heading_path"],
+                "page": chunk.get("page"),
+                "score": round(hit.score, 4),
+                "text": chunk["text"][:600],
+            }
+        )
+    ctx.citations = [*ctx.citations, *new_citations]
     payload = {
         "query": query,
         "mode": result.mode,
         "index_version": result.index_version,
+        "evidence_score": round(result.evidence_score, 4),
+        "evidence_score_kind": "vector_cosine_max",
         "insufficient_evidence": result.insufficient_evidence,
         "note": result.note,
-        "hits": [
-            {
-                "label": f"S{index}",
-                "chunk_id": hit.chunk["id"],
-                "source_title": hit.chunk["source_title"],
-                "document_version": hit.chunk["document_version"],
-                "heading_path": hit.chunk["heading_path"],
-                "page": hit.chunk.get("page"),
-                "score": round(hit.score, 4),
-                "text": hit.chunk["text"][:600],
-            }
-            for index, hit in enumerate(result.hits, start=1)
-        ],
+        "citation_labels": "标签在整个运行内唯一；再次引用同一片段会复用原标签",
+        "hits": hits,
     }
-    ctx.citations = [
-        {
-            "label": f"S{index}",
-            "chunk_id": hit.chunk["id"],
-            "document_id": hit.chunk["document_id"],
-            "document_version": hit.chunk["document_version"],
-            "source_title": hit.chunk["source_title"],
-            "heading_path": hit.chunk["heading_path"],
-            "page": hit.chunk.get("page"),
-            "snippet": hit.chunk["text"][:400],
-            "score": round(hit.score, 6),
-        }
-        for index, hit in enumerate(result.hits, start=1)
-    ]
     return ToolResult(ok=True, data=payload, truncated=len(str(payload)) > MAX_TOOL_OUTPUT_CHARS)
 
 

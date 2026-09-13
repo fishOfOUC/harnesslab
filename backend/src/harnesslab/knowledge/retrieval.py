@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,30 +42,41 @@ class SparseHit:
 
 
 class BM25Index:
-    """按 (project_id, index_version) 构建的内存 BM25，可整体重建。"""
+    """按 (project_id, index_version) 构建的内存 BM25，可整体重建。
+
+    这是进程级单例：多线程（API 检索预览与工作进程执行）可能同时进来，
+    因此重建与查询都持同一把锁，避免读到「旧的词表 + 新的 id 列表」这种错配。
+    """
 
     def __init__(self) -> None:
         self._version_key: tuple[str, str, int] | None = None
         self._bm25 = None
         self._ids: list[str] = []
+        self._lock = threading.RLock()
 
     def build(self, chunks: list[dict[str, Any]], *, project_id: str, index_version: str) -> None:
         key = (project_id, index_version, len(chunks))
-        if self._version_key == key:
-            return
-        from rank_bm25 import BM25Okapi
+        with self._lock:
+            if self._version_key == key:
+                return
+            from rank_bm25 import BM25Okapi
 
-        corpus = [tokenize(chunk["text"]) for chunk in chunks]
-        self._ids = [chunk["id"] for chunk in chunks]
-        self._bm25 = BM25Okapi(corpus) if corpus else None
-        self._version_key = key
-        logger.info("BM25 索引重建完成", extra={"extra_fields": {"chunks": len(corpus)}})
+            corpus = [tokenize(chunk["text"]) for chunk in chunks]
+            ids = [chunk["id"] for chunk in chunks]
+            bm25 = BM25Okapi(corpus) if corpus else None
+            # 先算完再整体替换，避免中途状态被其他线程读到
+            self._ids = ids
+            self._bm25 = bm25
+            self._version_key = key
+        logger.info("BM25 索引重建完成", extra={"extra_fields": {"chunks": len(chunks)}})
 
     def search(self, query: str, top_k: int) -> list[SparseHit]:
-        if self._bm25 is None or not self._ids:
-            return []
-        scores = self._bm25.get_scores(tokenize(query))
-        ranked = sorted(zip(self._ids, scores, strict=True), key=lambda item: item[1], reverse=True)
+        with self._lock:
+            if self._bm25 is None or not self._ids:
+                return []
+            ids = list(self._ids)
+            scores = self._bm25.get_scores(tokenize(query))
+        ranked = sorted(zip(ids, scores, strict=True), key=lambda item: item[1], reverse=True)
         return [SparseHit(chunk_id=cid, score=float(score)) for cid, score in ranked[:top_k] if score > 0]
 
 

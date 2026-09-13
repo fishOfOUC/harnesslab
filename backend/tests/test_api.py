@@ -375,7 +375,8 @@ def test_eval_run_reports_retrieval_metrics(client, repo, settings, api_project)
     result = client.get(f"{PREFIX}/eval-runs/{eval_id}").json()
     assert result["status"] == "succeeded", result
     assert result["dataset_version"] == "demo-dataset-v1"
-    assert result["metrics"]["samples"]["total"] == 5
+    assert result["metrics"]["samples"]["total"] == 6
+    assert result["metrics"]["samples"]["no_answer_denominator"] == 1
     assert result["metrics"]["recall_at_8"] is not None
     assert result["metrics"]["task_success_rate"].startswith("未执行")
     assert result["environment"]["notice"].startswith("容量与延迟指标未测量")

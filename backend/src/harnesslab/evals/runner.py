@@ -59,10 +59,12 @@ def run_eval(
             result = knowledge.search(project_id or "", case["question"], mode=mode)
             hits = result.hits
             insufficient = result.insufficient_evidence
+            evidence_score = round(result.evidence_score, 4)
             error = None
         except Exception as exc:
             hits = []
             insufficient = True
+            evidence_score = 0.0
             error = f"{type(exc).__name__}: {exc}"
 
         matched = {hit.chunk["source_title"] for hit in hits}
@@ -76,7 +78,12 @@ def run_eval(
                 break
         if expected_files:
             reciprocal_ranks.append(1.0 / first_rank if first_rank else 0.0)
-        if case.get("category") == "no_answer":
+        # 「无答案处理」只统计明确标注 expects_insufficient_evidence=true 的题；
+        # 语料中确实写有「没有给出该保证」的题属于可检索题，不能算作证据不足。
+        expects_insufficient = case.get("expects_insufficient_evidence")
+        if expects_insufficient is None:
+            expects_insufficient = case.get("category") == "no_answer" and not expected_files
+        if expects_insufficient:
             no_answer_total += 1
             if insufficient:
                 no_answer_ok += 1
@@ -91,7 +98,9 @@ def run_eval(
                 "hit_count": hit_count,
                 "expected_count": len(expected_files),
                 "first_relevant_rank": first_rank or None,
+                "evidence_score": evidence_score,
                 "insufficient_evidence": insufficient,
+                "expects_insufficient_evidence": bool(expects_insufficient),
                 "acceptance_rule": case.get("acceptance_rule"),
                 "generation_and_tool_metrics": "未执行",
                 "error": error,
@@ -117,6 +126,7 @@ def run_eval(
         "dataset_version": data.get("fixture_version"),
         "mode": mode or settings.retrieval_mode,
         "top_k": settings.retrieval_top_k,
+        "min_evidence_score": settings.min_evidence_score,
         "index_version": index_version,
         "project_id": project_id,
         "created_at": iso(),
@@ -134,8 +144,11 @@ def run_eval(
         "metrics": metrics,
         "case_results": case_results,
         "notes": [
-            "无答案题不参与 Recall/MRR 分母，单独评价",
-            "阈值需用评测集校准，不跨模型复用任意相似度阈值",
+            "只有标注 expects_insufficient_evidence=true 的题进入无答案处理率；"
+            "语料中写有「没有给出该保证」的题属于可检索题，参与 Recall/MRR",
+            "无 expected_source_spans 的题不参与 Recall/MRR 分母",
+            "证据强度按向量余弦最大值判定（RRF 融合分量级不同，不能直接套用余弦阈值）",
+            "阈值需用评测集校准；分布重叠时不应把阈值当门禁",
             data.get("notice", ""),
         ],
     }

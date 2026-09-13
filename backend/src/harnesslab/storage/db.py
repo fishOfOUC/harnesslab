@@ -255,13 +255,18 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
 
 
 class Database:
-    """单进程 SQLite 访问层：短事务，不把慢模型调用放进事务。"""
+    """单进程 SQLite 访问层：短事务，不把慢模型调用放进事务。
+
+    并发约束：整个进程共享一条连接（`check_same_thread=False` 只关闭了检查，不保证安全）。
+    工作进程执行运行的同时，API 线程池可能在轮询 run/timeline，若两边的语句在同一连接上
+    交错执行，会读到彼此的结果集，表现为「文档不存在」或 `InterfaceError` 这类不可复现的
+    错误。因此**所有**连接访问（读与写）都通过同一把可重入锁串行化。
+    """
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._local = threading.local()
-        self._write_lock = threading.RLock()
+        self._lock = threading.RLock()
         self._conn = self._connect()
         self._migrate()
 
@@ -290,13 +295,14 @@ class Database:
 
     @property
     def schema_version(self) -> int:
-        row = self._conn.execute("SELECT MAX(version) AS v FROM schema_migrations").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT MAX(version) AS v FROM schema_migrations").fetchone()
         return int(row["v"] or 0)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """写事务：串行化，避免 SQLite 写冲突。"""
-        with self._write_lock:
+        """写事务：持有全局锁，避免与其他线程的语句交错。"""
+        with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 yield self._conn
@@ -307,10 +313,12 @@ class Database:
                 self._conn.execute("COMMIT")
 
     def query(self, sql: str, params: tuple | list = ()) -> list[sqlite3.Row]:
-        return list(self._conn.execute(sql, params).fetchall())
+        with self._lock:
+            return list(self._conn.execute(sql, params).fetchall())
 
     def query_one(self, sql: str, params: tuple | list = ()) -> sqlite3.Row | None:
-        return self._conn.execute(sql, params).fetchone()
+        with self._lock:
+            return self._conn.execute(sql, params).fetchone()
 
     def execute(self, sql: str, params: tuple | list = ()) -> None:
         with self.transaction() as conn:

@@ -33,13 +33,27 @@
       "case_id": "demo-003",
       "category": "no_answer",
       "question": "资料中是否保证极端负载下零数据丢失？",
+      "expects_insufficient_evidence": false,
+      "note": "本题资料里有明确表述（capacity-notes 写明没有给出该保证），因此应当检索到并引用它；正确答案是“资料没有提供该保证”，而不是“检索不到证据”。这类题不进入“无答案处理率”分子分母。",
       "expected_source_spans": [
         {"file": "capacity-notes.txt", "heading": "不允许的计算", "fact": "没有给出零数据丢失保证"}
       ],
       "required_facts": ["无法从现有资料确认存在该保证"],
       "forbidden_facts": ["声称资料保证零数据丢失"],
       "expected_tools": ["search_knowledge"],
-      "acceptance_rule": "明确说明证据不足，不给出肯定结论"
+      "acceptance_rule": "明确说明无法从现有资料确认，不给出肯定结论"
+    },
+    {
+      "case_id": "demo-006",
+      "category": "no_answer",
+      "question": "资料中是否提到公司 2027 年的营收目标是多少？",
+      "expects_insufficient_evidence": true,
+      "note": "语料中完全没有该主题，用于检验检索层能否给出“证据不足”判定。",
+      "expected_source_spans": [],
+      "required_facts": ["说明现有资料未覆盖该问题"],
+      "forbidden_facts": ["给出任何具体营收数字"],
+      "expected_tools": ["search_knowledge"],
+      "acceptance_rule": "证据不足时明确说明，不编造数字"
     },
     {
       "case_id": "demo-004",

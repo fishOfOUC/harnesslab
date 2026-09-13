@@ -162,6 +162,57 @@ def test_approval_pauses_and_executes_ticket_once(repo, knowledge, settings, pro
     assert operations[0]["external_receipt"]
 
 
+def test_citations_survive_approval_resume(repo, knowledge, settings, project) -> None:
+    """真实缺陷回归：审批中断后恢复时，模型此前引用的 [S1] 必须仍然有效。
+
+    引用映射原先只存在内存上下文里，恢复会重建上下文导致旧引用全部判为无效
+    （真实 DeepSeek 运行中出现过「引用 0 条 / 引用了本次召回之外的标签」）。
+    现在引用从工具账本重建，标签在全 run 内唯一。
+    """
+    _import_demo(knowledge, project)
+    run = _new_run(repo, project, "先检索再申请工单")
+    model = ScriptedChatModel(
+        script=(
+            tool_call("call-search", "search_knowledge", query="并发上限与过载策略", top_k=5),
+            tool_call("call-ticket", "create_demo_ticket", title="带引用的工单", body="正文引用 [S1]"),
+            final("并发上限 v1 为 20、v2 为 50 [S1]；工单已创建。"),
+        )
+    )
+    executor = _make_executor(repo, settings, model)
+
+    paused = executor.execute(run["id"])
+    assert paused["status"] == RunStatus.WAITING_APPROVAL.value
+    approval = repo.pending_approval(run["id"])
+    assert approval is not None
+
+    repo.decide_approval(
+        approval["id"],
+        decision="approve",
+        expected_revision=1,
+        arguments_hash=approval["arguments_hash"],
+        reviewer_id="local-dev-user",
+    )
+    repo.update_run(
+        run["id"],
+        status=RunStatus.QUEUED.value,
+        interrupt_payload={
+            "decision": "approve",
+            "approval_id": approval["id"],
+            "revision": 1,
+            "arguments": approval["arguments"],
+        },
+    )
+    finished = executor.execute(run["id"])
+
+    assert finished["status"] == RunStatus.COMPLETED.value
+    result = finished["result"]
+    assert result["citations_resolved"], "恢复后引用映射丢失"
+    assert result["citations_resolved"][0]["label"] == "S1"
+    assert result["citations_resolved"][0]["chunk_id"]
+    assert not [item for item in result["limitations"] if "本次召回之外" in item]
+    assert not [item for item in result["limitations"] if "没有检索到可用证据" in item]
+
+
 def test_rejected_approval_does_not_create_ticket(repo, knowledge, settings, project) -> None:
     _import_demo(knowledge, project)
     run = _new_run(repo, project, "申请创建工单")

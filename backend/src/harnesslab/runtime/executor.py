@@ -137,6 +137,9 @@ class RunExecutor:
             events=self.events,
             index_version=index_version,
             skills=[skill.name for skill in skills],
+            # 引用映射是运行状态的一部分：审批中断后恢复时从工具账本重建，
+            # 否则模型在中断前引用的 [S1]…[Sn] 会在恢复后全部判为无效。
+            citations=self._restore_citations(run_id),
         )
         gateway = ToolGateway(self.repo, self.settings, policy=policy, events=self.events)
         runtime = build_tool_runtime(ctx, gateway, self.settings)
@@ -501,6 +504,44 @@ class RunExecutor:
         self.events.emit(run_id, EventType.RUN_RECOVERING, {"replayed_events": len(events)})
 
     # ------------------------------------------------------------------
+    def _restore_citations(self, run_id: str) -> list[dict[str, Any]]:
+        """从工具账本重建本次运行已产生的引用映射（文档 03 第 4 节 evidence_refs）。
+
+        只在内存里保存引用会在审批中断/崩溃恢复后丢失，导致模型已经引用的 [S1]…[Sn]
+        被判为「本次召回之外」。账本里的检索结果本身就是权威记录，因此按标签重建。
+        """
+        citations: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for operation in self.repo.list_operations(run_id):
+            if operation["tool_name"] != "search_knowledge":
+                continue
+            result = operation.get("result")
+            data = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(data, dict):
+                continue
+            for hit in data.get("hits", []):
+                if not isinstance(hit, dict):
+                    continue
+                chunk_id = str(hit.get("chunk_id", ""))
+                label = str(hit.get("label", ""))
+                if not chunk_id or not label or chunk_id in seen:
+                    continue
+                seen.add(chunk_id)
+                citations.append(
+                    {
+                        "label": label,
+                        "chunk_id": chunk_id,
+                        "document_version": hit.get("document_version"),
+                        "source_title": hit.get("source_title", ""),
+                        "heading_path": hit.get("heading_path", ""),
+                        "page": hit.get("page"),
+                        "snippet": str(hit.get("text", ""))[:400],
+                        "score": hit.get("score"),
+                    }
+                )
+        citations.sort(key=lambda item: int(item["label"][1:]) if item["label"][1:].isdigit() else 0)
+        return citations
+
     def _ensure_index(self, project_id: str) -> str | None:
         try:
             manifest = self.knowledge.ensure_active_manifest(project_id)

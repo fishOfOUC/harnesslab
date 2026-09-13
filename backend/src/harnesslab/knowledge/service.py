@@ -53,6 +53,9 @@ class RetrievalResult:
     candidates: list[dict[str, Any]] = field(default_factory=list)
     insufficient_evidence: bool = False
     note: str = ""
+    # 证据强度：本次召回中最强的向量（余弦）相似度。
+    # 跨检索模式可比，用来判定「证据是否充分」；融合分（RRF）量级不同，不能用于阈值比较。
+    evidence_score: float = 0.0
 
 
 class KnowledgeService:
@@ -346,12 +349,15 @@ class KnowledgeService:
                 )
             )
 
-        max_score = max((hit.score for hit in hits), default=0.0)
-        insufficient = not hits or max_score < self.settings.min_evidence_score
+        # 证据强度按向量相似度取值（RRF 融合分量级不同，不能直接套用余弦阈值）
+        vector_scores = {hit.chunk_id: hit.score for hit in vector_hits}
+        evidence_score = max(vector_scores.values(), default=0.0)
+        insufficient = not hits or evidence_score < self.settings.min_evidence_score
         return RetrievalResult(
             hits=hits,
             mode=mode,
             index_version=index_version_value,
+            evidence_score=evidence_score,
             candidates=(
                 [hit.to_dict() for hit in hits]
                 if mode == "vector"

@@ -16,11 +16,11 @@ HarnessLab 是一个面向技术展示的知识工作 Agent 工作台：导入�
 cd backend
 uv sync
 
-# 2. 配置模型：复制模板并按本机 LM Studio 实际值填写
-copy ..\.env.example ..\.env
-#   至少填写 EMBEDDING_MODEL 与 CHAT_MODEL 的真实模型 ID
+# 2. 配置模型
+#    本机已配置好 .env（LM Studio Embedding + DeepSeek Chat），该文件被 .gitignore 忽略
+#    换机器时：copy ..\.env.example ..\.env，再填 EMBEDDING_MODEL / CHAT_MODEL / CHAT_API_KEY
 
-# 3. 环境检查（--probe 会真实调用 LM Studio）
+# 3. 环境检查（--probe 会真实调用 Embedding 与 Chat 服务）
 uv run harnesslab doctor --probe
 
 # 4. 初始化业务库与检查点库
@@ -88,20 +88,20 @@ configs/ prompts/ skills/ datasets/demo/ scripts/ docs/
 
 | 需求 | 能力 | 状态 | 验证方式 |
 | --- | --- | --- | --- |
-| H01 | 模型接入与能力探测 | 已实现，真机未探测 | `doctor --probe` 与 `/model-profiles/{id}/probe` 真实调用 LM Studio；本机结果待填入文档 11 |
-| H02 | Agent 循环与结构化结果 | 已实现并验证 | 脚本化替身驱动 `create_agent`，最终答复经 `AgentAnswer` Schema 校验，失败保留原文并标注限制 |
+| H01 | 模型接入与能力探测 | 已实现并真机验证 | LM Studio Embedding 实测维度 1024；DeepSeek `deepseek-chat` 探测 `chat/streaming/tool_calling/structured_output` 全为 true |
+| H02 | Agent 循环与结构化结果 | 已实现并验证（含真实模型） | 真实 DeepSeek 完成 13～18 次工具调用并产出结构化结果；最终答复经 `AgentAnswer` Schema 校验，失败保留原文并标注限制 |
 | H03 | 会话与短期记忆 | 已实现 | thread 级消息状态 + 文件检查点；同 thread 只允许一个非终态 run（数据库约束 + 测试） |
 | H04 | 工具注册与输入输出校验 | 已实现并验证 | 工具经 LangChain 签名校验后才进入网关；非法参数无副作用（用例覆盖） |
-| H05 | RAG 与来源引用 | 已实现并验证 | 导入 5 份演示资料 → 混合检索 → `[S1]` 标签映射到固定文档版本与字符/页码定位；删除后立即阻断检索与原文 |
+| H05 | RAG 与来源引用 | 已实现并验证（含真实模型） | 混合检索命中固定文档版本与字符/页码定位；真实运行产出 14 条可定位引用、0 条限制；删除后立即阻断检索与原文 |
 | H06 | 持久化与恢复 | 已实现并验证（替代故障注入） | 租约 CAS + fencing token、过期租约进入 `recovering`、结果不明的副作用进入人工核对且不自动重试 |
 | H07 | 流式事件与取消 | 已实现 | 事件先落库后发送、seq 唯一、`Last-Event-ID` 补播、游标过旧返回 410；取消在模型/工具边界检查 |
 | H08 | 步数、时长与用量预算 | 已实现并验证 | 模型/工具/时长/token 预算、循环检测；耗尽落 `BUDGET_EXCEEDED` 并保留已有产物 |
 | H09 | 可观测性与基础评测 | 已实现 | run 事件表 + 运行时间线 + 配置快照；检索评测输出 Recall@k / MRR / 无答案处理 |
 | H10 | 计划、任务列表与重规划 | 部分实现 | 计划生成、步骤状态与事件已实现；重规划**未接线**（仅保留上限配置） |
-| H11 | 人工审批与参数修改 | 已实现并验证 | `interrupt()` 中断 + 审批实体落库；批准/拒绝/修订版本、过期、双批准冲突均有用例 |
+| H11 | 人工审批与参数修改 | 已实现并验证（含真实模型） | `interrupt()` 中断 + 审批实体落库；真实运行中批准后恢复执行且只产生一份工单，重复批准返回 `APPROVAL_CONFLICT`；修订/过期/取消竞态有用例 |
 | H12 | 上下文预算与压缩 | 已实现，质量回归未执行 | 装配顺序与 80% 压缩阈值；压缩保留用户约束、审批状态、产物与引用 ID |
 | H13 | 长期记忆与删除 | 已实现并验证 | 候选/确认/修订/删除 + revision 冲突；删除立即阻断读取 |
-| H14 | 混合检索与可选重排 | 部分实现 | 向量 + 中文 BM25 + RRF 与检索实验室已实现；**重排模型未接入** |
+| H14 | 混合检索与可选重排 | 部分实现，已做真实对照 | 向量 + 中文 BM25 + RRF 与检索实验室已实现，并用固定数据集完成前缀对照（hybrid MRR 0.729 → 0.900）；**重排模型未接入** |
 | H15 | Skills 与 Prompt 版本 | 已实现 | `skills/*/SKILL.md` 加载、内容哈希进入 run 快照；`required_tools` 不提升权限（用例覆盖） |
 | H16 | MCP 扩展工具 | 未实现（P1） | — |
 | H17 | 受限文件工作区与产物 | 已实现并验证 | 绝对路径/盘符/UNC/`..`/备用数据流/受限设备名/符号链接逃逸全部拒绝；产物按 ID 下载 |
@@ -121,16 +121,26 @@ configs/ prompts/ skills/ datasets/demo/ scripts/ docs/
 ## 验证记录
 
 ```powershell
-cd backend; uv run pytest          # 99 项自动化测试
-cd frontend; npm run build         # 类型检查 + 构建
-pwsh scripts/smoke_e2e.ps1         # 真实服务端到端（替身模型）
+cd backend; uv run pytest                  # 107 项自动化测试
+cd frontend; npm run build                 # 类型检查 + 构建
+pwsh scripts/smoke_e2e.ps1                 # 真实服务端到端（替身模型）
+pwsh scripts/smoke_approval_flow.ps1       # 真实模型：受控行动 + 审批 + 幂等
+uv run python ../scripts/calibrate_retrieval.py   # 检索参数校准
 ```
 
 测试覆盖：路径与策略单元、预算与循环检测、仓储一致性（幂等/租约/审批竞态）、知识库导入与检索、工具网关（幂等账本/超时/取消前置检查）、运行执行器（引用校验/审批中断恢复/预算/人工核对）、工作进程、API 契约与评测接口。
 
 浏览器端走查（2026-09-13，Chrome + 真实后端，替身模型）：概览、任务工作台、审批中心三个页面正常渲染，控制台零错误；导入 5 份资料后 24 个 chunk 可检索；提问运行落 `completed` 并展示用量、时间线与限制说明；审批卡的参数修订成功产生 v2 待审批版本，v1 自动变为 `superseded`。
 
-**未执行的验证**：真实 LM Studio Embedding 维度与中文召回实测、真实 Chat 模型工具调用与多轮对话（当前审批链路由脚本化替身模型驱动验证）、进程 kill 级故障演练、注入与越权对抗回归、性能（排队/首 Token/p95）。
+真实模型联调（2026-09-13，LM Studio Embedding + DeepSeek `deepseek-chat`）：`scripts/smoke_approval_flow.ps1` 跑通完整受控行动链路——13～18 次工具调用（检索、读原文、计算、写报告）全部成功 → 停在等待审批 → 批准 → 恢复执行 → 落 `completed`；**引用 14 条、限制说明 0 条**；重复批准返回 `APPROVAL_CONFLICT`；工单新增数恰为 1。模型还主动识别出 `untrusted-note.md` 中的提示注入并要求不执行。
+
+联调中发现并修复的三个真实缺陷（均有回归测试）：
+
+1. **共享 SQLite 连接未串行化**：读操作没加锁，API 轮询线程与执行线程的语句在同一连接上交错，产生「文档不存在」与 `sqlite3.InterfaceError`（工具调用偶发失败）。已用最小复现证实，现所有访问共用一把可重入锁。
+2. **引用映射在审批中断后丢失**：`evidence_refs` 只存在内存上下文里，恢复时重建上下文导致模型先前引用的 `[S1]…[Sn]` 全部判为无效（真实运行出现「引用 0 条」）。现从工具账本按标签重建，标签在全 run 内唯一。
+3. **证据阈值口径错误**：混合模式误用 RRF 融合分（量级 0.03）与余弦阈值比较，导致永远判定证据不足。现按向量余弦最大值判定，并已用数据集校准。
+
+**未执行的验证**：进程 kill 级故障演练、注入与越权对抗回归（真实模型下的主观绕过率）、性能指标（排队/首 Token/p95）、100 条评测集与三组对照实验、两次演示彩排。
 
 ## 已知限制与排障
 
@@ -143,8 +153,29 @@ pwsh scripts/smoke_e2e.ps1         # 真实服务端到端（替身模型）
 | 工单重复 | 工具幂等键 = run + 逻辑动作 ID + 工具版本 + 审批参数版本；查看运行详情的工具账本 |
 | 页面消息重复 | 客户端按 seq 去重；补播使用 `Last-Event-ID` |
 | Agent 不调用工具 | 用 `harnesslab doctor --probe` 检查 Chat 模型是否支持工具调用；不支持会被明确提示 |
+| 引用显示为空 / 全部判为无效 | 引用映射从工具账本重建；若历史运行的账本被清理则无法还原，需重跑 |
 
 安全边界：本机开发模式仅绑定 loopback，使用服务端固定身份；进入局域网或公网前必须实现正式认证与资源授权，不能把单用户模式当作匿名公开服务。
+
+## 本机实测配置（2026-09-13）
+
+| 项 | 实测值 |
+| --- | --- |
+| Embedding | LM Studio `text-embedding-qwen3-embedding-0.6b`，维度 **1024**，归一化开启 |
+| 其他可用 Embedding | `mxbai-embed-large-v1`（1024）、`nomic-embed-text-v1.5`（768），均为英文优先，未采用 |
+| Chat | DeepSeek `deepseek-chat`，探测结果：`chat / streaming / tool_calling / structured_output` 全部为 **true** |
+| query 前缀 | 中文指令前缀（实测优于无前缀与 Qwen3 官方英文前缀，详见校准记录） |
+| 证据阈值 | `MIN_EVIDENCE_SCORE=0.47`（可检索题最低 0.5233 ／ 语料未覆盖题最高 0.3603） |
+
+检索对照（固定数据集，只改一个变量）：
+
+| 变体 | hybrid Recall@8 / MRR | vector Recall@8 / MRR |
+| --- | --- | --- |
+| 无前缀 | 1.000 / 0.729 | 0.833 / 0.800 |
+| Qwen3 官方英文指令 | 1.000 / 0.740 | 0.833 / 0.800 |
+| **中文指令前缀（采用）** | **1.000 / 0.900** | **1.000 / 0.867** |
+
+> 使用云端 Chat 时，检索到的资料片段会随上下文发送给该服务。当前 `datasets/demo` 为自建合成资料；导入真实内部资料前需要重新评估。
 
 ## 文档导航
 
@@ -168,5 +199,7 @@ pwsh scripts/smoke_e2e.ps1         # 真实服务端到端（替身模型）
 设计文档写 Python 3.11；本机实际使用 **Python 3.12**，依赖由 `backend/uv.lock` 锁定，实测组合：
 
 `langchain 1.4.0` · `langgraph 1.2.11` · `langchain-openai 1.6.2` · `langgraph-checkpoint-sqlite 3.1.1` · `qdrant-client 1.19.0` · `fastapi`（starlette 1.6.0）· React 19 + Vite 7。
+
+实测模型：Embedding 为 LM Studio `text-embedding-qwen3-embedding-0.6b`（1024 维）；Chat 为 DeepSeek `deepseek-chat`（工具调用已实测通过）。两者均记录在 `reports/2026-09-13-实施工作报告.md` 的联调记录中。
 
 升级依赖需重跑：图恢复、消息序列化、Embedding 适配与审批竞态测试，并保留旧版本工作进程处理未完成任务。

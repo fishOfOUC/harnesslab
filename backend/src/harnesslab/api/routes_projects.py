@@ -114,6 +114,7 @@ def retrieval_preview(
     repo: RepoDep,
     knowledge: KnowledgeDep,
     identity: IdentityDep,
+    settings: SettingsDep,
 ) -> dict[str, Any]:
     """检索调试：返回各阶段候选。需要 API 与工作进程共用同一向量库实例。"""
     require_project(repo, project_id, identity)
@@ -127,6 +128,9 @@ def retrieval_preview(
     return {
         "mode": result.mode,
         "index_version": result.index_version,
+        "evidence_score": round(result.evidence_score, 4),
+        "evidence_score_kind": "vector_cosine_max",
+        "min_evidence_score": settings.min_evidence_score,
         "insufficient_evidence": result.insufficient_evidence,
         "note": result.note,
         "candidates": result.candidates,
@@ -261,7 +265,7 @@ def seed_demo(
     return enqueue_demo_seed(repo, settings, project_id)
 
 
-@router.post("/projects/{project_id}/demo/tickets")
+@router.get("/projects/{project_id}/demo/tickets")
 def list_demo_tickets(
     project_id: str, repo: RepoDep, identity: IdentityDep
 ) -> dict[str, Any]:
