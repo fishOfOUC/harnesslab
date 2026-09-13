@@ -1,0 +1,32 @@
+# 运行数据与产物（文档 08 第 8 节：运行数据、产物、真实配置不入库）
+data/
+artifacts/
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv*/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# 前端
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 配置与密钥
+.env
+.env.local
+*.secret
+
+# 浏览器走查产物
+.playwright-cli/
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store

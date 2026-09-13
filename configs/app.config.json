@@ -1,0 +1,15 @@
+{
+  "_comment": "无密钥配置文件：位于内置默认值与环境变量之间。密钥只能放在环境变量或本机秘密管理中。",
+  "retrieval_mode": "hybrid",
+  "retrieval_top_k": 8,
+  "chunk_target_tokens": 600,
+  "chunk_overlap_tokens": 80,
+  "pipeline_version": "chunker-v1",
+  "run_worker_in_api": true,
+  "model_max_concurrency": 1,
+  "worker_concurrency": 1,
+  "approval_ttl_hours": 24,
+  "sandbox_enabled": false,
+  "trace_export_enabled": false,
+  "fault_injection": ""
+}

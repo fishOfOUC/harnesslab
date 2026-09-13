@@ -1,0 +1,59 @@
+[project]
+name = "harnesslab"
+version = "0.1.0"
+description = "HarnessLab：面向技术展示的 LangChain / LangGraph Agent 工作台"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "httpx>=0.27",
+    "python-multipart>=0.0.12",
+    "langchain>=1.0",
+    "langgraph>=1.0",
+    "langchain-openai>=1.0",
+    "langgraph-checkpoint-sqlite>=3.0",
+    "numpy>=1.26",
+    "pypdf>=5.0",
+    "jieba>=0.42.1",
+    "rank-bm25>=0.2.2",
+    "qdrant-client>=1.19",
+]
+
+[project.scripts]
+harnesslab = "harnesslab.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.14",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harnesslab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+# E501 由 line-length 统一约束；RUF012 与 pydantic 模型字段写法冲突
+# RUF001/002/003 会误报中文全角标点，本项目注释与文案均为中文，故关闭
+ignore = ["E501", "RUF012", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
